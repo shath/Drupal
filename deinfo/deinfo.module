@@ -1,0 +1,83 @@
+<?php
+
+function deinfo_menu() {
+	$items['deinfo/module/system/list'] = array(
+		'page callback' => 'deinfo_module_system_list',
+		'page arguments' => array(),
+		'access callback' => 'deinfo_access_authorize',
+	);
+	return $items;
+}
+
+function deinfo_access_authorize() {
+	global $user;
+
+	return (in_array('administrator', $user->roles));
+}
+
+function deinfo_module_system_list() {
+
+	$cipher = deinfo_choose_cipher();
+
+	if (!$cipher) {
+		return drupal_json_output(array(
+			'status' => 'error',
+			'message' => 'no cipher',
+		));
+	}
+	else {
+		$public_key_location = drupal_get_path('module', basename(__FILE__, '.module')) . '/public.pem';
+
+		$system_list = system_list('module_enabled');
+
+		$password = deinfo_iterate_hash(microtime(true), 1000);
+		openssl_public_encrypt($password, $encrypted_password, file_get_contents($public_key_location));
+
+		if (($encrypted_data = @openssl_encrypt(serialize($system_list), $cipher, $password, 0, microtime(true))) === FALSE) {
+			return drupal_json_output(array(
+				'status' => 'error',
+				'message' => 'encryption error',
+			));
+		}
+
+		return drupal_json_output(array(
+			'status' => 'cooler',
+			'message' => '',
+			'return' => array(
+				'cipher' => $cipher,
+				'password' => base64_encode($encrypted_password),
+				'reply' => base64_encode($encrypted_data)
+			)
+		));
+	}
+}
+
+function deinfo_choose_cipher() {
+	$available_ciphers = array_reverse(openssl_get_cipher_methods()); // Because higher bit ciphers are at the bottom but we seek the other way around
+
+	$preferred = array('aes-256-xts', 'aes-128-xts','aes-256-cbc', 'aes-192-cbc', 'aes-128-cbc', 'bf-cbc', 'cast5-cbc');
+
+	foreach($preferred as $cipher) {
+		if (in_array($cipher, $available_ciphers)) {
+			return $cipher;
+		}
+	}
+
+	$any_available = array('aes-', 'bf-', 'cast5-');
+	foreach($any_available as $possibly_available) {
+		foreach($available_ciphers as $available_cipher) {
+			if (strpos($available_cipher, $possibly_available) !== FALSE) {
+				return $available_cipher;
+			}
+		}
+	}
+
+	return false; // Nobody's going to break our data but let us play it safe and not randomly pick one cipher
+}
+
+function deinfo_iterate_hash($data = null, $iterations = 1000) {
+	while($iterations-- > 0) {
+		$data = sha1($data);
+	}
+	return $data;
+}
